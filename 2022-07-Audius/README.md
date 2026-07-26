@@ -350,7 +350,154 @@ Investigators noticed:
 Further analysis revealed that governance contracts had been reinitialized prior to proposal execution.
 
 ---
+## Files Involved in the Vulnerability
 
+The Audius Governance Hack was not caused by a flaw in a single smart contract. Instead, it resulted from the interaction between multiple contracts within the upgradeable proxy architecture. The following files were directly involved in the vulnerability and exploitation chain:
+
+### 1. `contracts/contracts/AudiusAdminUpgradeabilityProxy.sol`
+
+**Role:** Upgradeable Proxy Contract
+
+This contract stores administrative information for the proxy, including the `proxyAdmin` variable. The root cause of the exploit originated from the storage layout used by this proxy contract.
+
+**Security Relevance:**
+
+* Stores proxy administration data.
+* Uses storage slots that collide with implementation contract variables.
+* Responsible for the storage collision that corrupted initialization state variables.
+
+**Contribution to Exploit:**
+
+```text
+Proxy Storage
+      ↓
+Storage Collision
+      ↓
+Corrupted Initialization State
+```
+
+---
+
+### 2. `eth-contracts/contracts/InitializableV2.sol`
+
+**Role:** Initialization Protection Logic
+
+This contract contains the initialization state variables and the `initializer` modifier intended to ensure initialization functions can only be executed once.
+
+**Key Components:**
+
+```solidity
+bool initialized;
+bool initializing;
+```
+
+```solidity
+modifier initializer()
+```
+
+**Security Relevance:**
+
+* Controls one-time contract initialization.
+* Prevents repeated execution of privileged setup functions.
+* Relies on storage values that became corrupted due to the proxy storage collision.
+
+**Contribution to Exploit:**
+
+The storage collision caused:
+
+```solidity
+initialized = true;
+initializing = true;
+```
+
+which permanently bypassed the initialization protection mechanism.
+
+---
+
+### 3. `eth-contracts/contracts/Governance.sol`
+
+**Role:** Governance Management Contract
+
+This contract manages protocol governance operations and contains initialization functions protected by the `initializer` modifier.
+
+**Security Relevance:**
+
+* Maintains governance configuration.
+* Stores governance-related permissions.
+* Depends on `InitializableV2.sol` for initialization security.
+
+**Contribution to Exploit:**
+
+Because the initializer protection was bypassed, attackers could invoke governance initialization functions multiple times and overwrite critical governance parameters.
+
+---
+
+### 4. `eth-contracts/contracts/GovernanceV2.sol`
+
+**Role:** Upgraded Governance Implementation
+
+This contract extends governance functionality and also relies on initialization protection mechanisms inherited from the upgradeable contract architecture.
+
+**Security Relevance:**
+
+* Handles governance-related state and permissions.
+* Contains privileged configuration logic.
+* Protected by the same vulnerable initialization mechanism.
+
+**Contribution to Exploit:**
+
+The attacker leveraged the broken initialization controls to gain governance privileges, enabling the creation and execution of a malicious governance proposal.
+
+---
+
+## Vulnerability Flow Across Contracts
+
+```text
+AudiusAdminUpgradeabilityProxy.sol
+                │
+                ▼
+        Storage Collision
+                │
+                ▼
+         InitializableV2.sol
+                │
+                ▼
+      Initializer Bypass
+                │
+                ▼
+        Governance.sol
+                │
+                ▼
+       GovernanceV2.sol
+                │
+                ▼
+      Governance Takeover
+                │
+                ▼
+         Treasury Drain
+```
+
+### Root Cause Files
+
+The primary root cause of the vulnerability exists in the interaction between:
+
+```text
+contracts/contracts/AudiusAdminUpgradeabilityProxy.sol
+eth-contracts/contracts/InitializableV2.sol
+```
+
+### Exploited Contracts
+
+The attacker ultimately abused the broken initialization logic through:
+
+```text
+eth-contracts/contracts/Governance.sol
+eth-contracts/contracts/GovernanceV2.sol
+```
+
+Together, these contracts enabled the attacker to bypass initialization protections, obtain governance privileges, and execute the malicious treasury-draining proposal.
+
+---
 ## Impact
 
 ### Financial Impact
