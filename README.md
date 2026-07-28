@@ -21,4 +21,4 @@ For every new incident, create a single root-level folder using the following na
 1. **Claiming an Incident:** To avoid duplicate work, interns must use the designated Google Chat thread to inform the team which incident they are working on. Claims are on a First-Come, First-Served (FCFS) basis. Do not download or work on an incident that someone else has already claimed.
 2. **Branching:** Do not commit directly to the `master` branch. Create a corresponding working branch for your incident(s).
 3. **Pull Requests:** When your incident folder is complete, create a Pull Request against the `master` branch.
-4. **Reviewers:** You **must** tag Saurabh Joshi (GitHub ID: `sbjoshi`) as a reviewer on your Pull Request.
+4. **Reviewers:** You **must** tag Saurabh Joshi (GitHub ID: `sjoshicerify`) as a reviewer on your Pull Request.
