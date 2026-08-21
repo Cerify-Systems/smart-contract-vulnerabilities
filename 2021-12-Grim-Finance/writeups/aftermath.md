@@ -1,0 +1,2 @@
+# Aftermath
+Grim Finance paused its vaults after the December 2021 exploit because the vulnerability was present in the vault deposit logic and therefore exposed deposited funds across affected vaults. Public reporting put the loss at approximately $30 million. Grim later removed the exploited `depositFor()` function, introduced a Sentinel/killswitch for emergency vault locking, and added TVL monitoring for abnormal changes. The incident also prompted warnings to other projects using similar vault code. 
