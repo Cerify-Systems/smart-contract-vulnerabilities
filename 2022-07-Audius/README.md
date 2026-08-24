@@ -1,0 +1,587 @@
+# Audius Governance Hack (July 2022)
+
+## Overview
+
+The Audius Governance Hack was a critical smart contract exploit that occurred on **23 July 2022**, resulting in the unauthorized transfer of approximately **18.5 million AUDIO tokens** from the Audius community treasury.
+
+Unlike common exploits such as reentrancy attacks, flash-loan attacks, or arithmetic overflows, this incident was caused by a **storage collision vulnerability** in an upgradeable proxy architecture. The vulnerability allowed an attacker to repeatedly execute initialization functions, gain governance privileges, and ultimately drain treasury funds.
+
+**Impact:** ~18.5 Million AUDIO Tokens
+**Estimated Value at Time of Attack:** ~$6 Million
+**Attack Type:** Governance Takeover
+**Root Cause:** Storage Collision in Upgradeable Proxy Contracts
+
+---
+
+## About Audius
+
+Audius is a decentralized music streaming protocol that enables artists and listeners to interact without relying on centralized intermediaries.
+
+The protocol uses:
+
+* Ethereum smart contracts
+* Governance mechanisms
+* Staking infrastructure
+* Upgradeable proxy contracts
+* AUDIO governance token
+
+Governance controls critical protocol operations, including treasury management and protocol upgrades.
+
+---
+
+## Vulnerability Classification
+
+| Category           | Type                           |
+| ------------------ | ------------------------------ |
+| Vulnerability      | Storage Collision              |
+| Attack Vector      | Reinitialization               |
+| Affected Component | Upgradeable Proxy Architecture |
+| Security Impact    | Privilege Escalation           |
+| Final Result       | Governance Takeover            |
+
+---
+
+## Architecture Overview
+
+Audius utilized an upgradeable proxy pattern.
+
+```text
+User
+  |
+  v
+Proxy Contract
+  |
+delegatecall
+  |
+Implementation Contract
+```
+
+In this architecture:
+
+* Logic resides in the implementation contract.
+* Storage resides in the proxy contract.
+* Function execution occurs through `delegatecall`.
+
+Because `delegatecall` executes implementation code while using proxy storage, storage layouts must remain perfectly aligned.
+
+---
+
+## Root Cause
+
+### Storage Collision
+
+The proxy contract stored an administrative variable in Storage Slot 0:
+
+```solidity
+address proxyAdmin;
+```
+
+Storage Layout:
+
+```text
+Slot 0 -> proxyAdmin
+```
+
+The implementation contract inherited OpenZeppelin's initialization logic:
+
+```solidity
+bool initialized;
+bool initializing;
+```
+
+Expected Layout:
+
+```text
+Slot 0 -> initialized
+Slot 0 -> initializing
+```
+
+Both contracts attempted to use the same storage slot.
+
+As a result, the implementation interpreted the proxy administrator address as initialization state variables.
+
+---
+
+## Expected Initialization State
+
+The initializer modifier expected:
+
+```solidity
+initialized = false;
+initializing = false;
+```
+
+Meaning:
+
+```text
+Contract has never been initialized.
+```
+
+---
+
+## Actual Initialization State
+
+Due to storage collision:
+
+```solidity
+initialized = true;
+initializing = true;
+```
+
+The non-zero proxy administrator address caused both boolean values to evaluate as true.
+
+This created a permanently broken initialization state.
+
+---
+
+## Vulnerable Initialization Logic
+
+```solidity
+modifier initializer() {
+    require(
+        initializing || !initialized,
+        "already initialized"
+    );
+
+    bool isTopLevelCall = !initializing;
+
+    if (isTopLevelCall) {
+        initializing = true;
+        initialized = true;
+    }
+
+    _;
+
+    if (isTopLevelCall) {
+        initializing = false;
+    }
+}
+```
+
+### Intended Behavior
+
+After the first successful initialization:
+
+```solidity
+initialized = true;
+initializing = false;
+```
+
+Any future call would fail:
+
+```solidity
+require(false || false);
+```
+
+Result:
+
+```text
+Transaction Reverted
+```
+
+### Actual Behavior
+
+Because the contract started in the state:
+
+```solidity
+initialized = true;
+initializing = true;
+```
+
+The check became:
+
+```solidity
+require(true || false);
+```
+
+Result:
+
+```text
+Always Passes
+```
+
+Furthermore:
+
+```solidity
+bool isTopLevelCall = !initializing;
+```
+
+became:
+
+```solidity
+bool isTopLevelCall = false;
+```
+
+which prevented:
+
+```solidity
+initializing = false;
+```
+
+from ever executing.
+
+The contract remained permanently stuck in the initializing state.
+
+---
+
+## Attack Execution
+
+### Step 1
+
+The attacker identified that initialization protection could be bypassed.
+
+### Step 2
+
+The attacker repeatedly called initialization functions.
+
+Example:
+
+```solidity
+initialize(attackerAddress);
+```
+
+### Step 3
+
+Governance-related addresses were overwritten.
+
+```solidity
+governance = attackerAddress;
+```
+
+### Step 4
+
+The attacker obtained governance privileges.
+
+### Step 5
+
+A malicious governance proposal (Proposal #85) was created.
+
+### Step 6
+
+The proposal was executed using the newly acquired privileges.
+
+### Step 7
+
+Approximately 18.5 million AUDIO tokens were transferred from the community treasury.
+
+---
+
+## Simplified Exploit Example
+
+### Treasury Contract
+
+```solidity
+contract Treasury {
+
+    address public governance;
+
+    function initialize(address _gov)
+        public
+        initializer
+    {
+        governance = _gov;
+    }
+
+    function transferFunds(
+        address to,
+        uint amount
+    )
+        external
+    {
+        require(msg.sender == governance);
+
+        token.transfer(to, amount);
+    }
+}
+```
+
+### Attack Scenario
+
+Original Governance:
+
+```text
+governance = TeamWallet
+```
+
+Attacker Calls:
+
+```solidity
+initialize(attackerWallet);
+```
+
+State Changes To:
+
+```text
+governance = attackerWallet
+```
+
+Now:
+
+```solidity
+msg.sender == governance
+```
+
+evaluates to:
+
+```solidity
+attackerWallet == attackerWallet
+```
+
+Result:
+
+```text
+Access Granted
+```
+
+The attacker can now transfer treasury funds.
+
+---
+
+## Detection
+
+The incident was discovered after unusual governance activity was observed.
+
+Investigators noticed:
+
+* Unexpected governance changes
+* Unauthorized proposal creation
+* Suspicious treasury transfer requests
+
+Further analysis revealed that governance contracts had been reinitialized prior to proposal execution.
+
+---
+## Files Involved in the Vulnerability
+
+The Audius Governance Hack was not caused by a flaw in a single smart contract. Instead, it resulted from the interaction between multiple contracts within the upgradeable proxy architecture. The following files were directly involved in the vulnerability and exploitation chain:
+
+### 1. `contracts/contracts/AudiusAdminUpgradeabilityProxy.sol`
+
+**Role:** Upgradeable Proxy Contract
+
+This contract stores administrative information for the proxy, including the `proxyAdmin` variable. The root cause of the exploit originated from the storage layout used by this proxy contract.
+
+**Security Relevance:**
+
+* Stores proxy administration data.
+* Uses storage slots that collide with implementation contract variables.
+* Responsible for the storage collision that corrupted initialization state variables.
+
+**Contribution to Exploit:**
+
+```text
+Proxy Storage
+      ↓
+Storage Collision
+      ↓
+Corrupted Initialization State
+```
+
+---
+
+### 2. `eth-contracts/contracts/InitializableV2.sol`
+
+**Role:** Initialization Protection Logic
+
+This contract contains the initialization state variables and the `initializer` modifier intended to ensure initialization functions can only be executed once.
+
+**Key Components:**
+
+```solidity
+bool initialized;
+bool initializing;
+```
+
+```solidity
+modifier initializer()
+```
+
+**Security Relevance:**
+
+* Controls one-time contract initialization.
+* Prevents repeated execution of privileged setup functions.
+* Relies on storage values that became corrupted due to the proxy storage collision.
+
+**Contribution to Exploit:**
+
+The storage collision caused:
+
+```solidity
+initialized = true;
+initializing = true;
+```
+
+which permanently bypassed the initialization protection mechanism.
+
+---
+
+### 3. `eth-contracts/contracts/Governance.sol`
+
+**Role:** Governance Management Contract
+
+This contract manages protocol governance operations and contains initialization functions protected by the `initializer` modifier.
+
+**Security Relevance:**
+
+* Maintains governance configuration.
+* Stores governance-related permissions.
+* Depends on `InitializableV2.sol` for initialization security.
+
+**Contribution to Exploit:**
+
+Because the initializer protection was bypassed, attackers could invoke governance initialization functions multiple times and overwrite critical governance parameters.
+
+---
+
+### 4. `eth-contracts/contracts/GovernanceV2.sol`
+
+**Role:** Upgraded Governance Implementation
+
+This contract extends governance functionality and also relies on initialization protection mechanisms inherited from the upgradeable contract architecture.
+
+**Security Relevance:**
+
+* Handles governance-related state and permissions.
+* Contains privileged configuration logic.
+* Protected by the same vulnerable initialization mechanism.
+
+**Contribution to Exploit:**
+
+The attacker leveraged the broken initialization controls to gain governance privileges, enabling the creation and execution of a malicious governance proposal.
+
+---
+
+## Vulnerability Flow Across Contracts
+
+```text
+AudiusAdminUpgradeabilityProxy.sol
+                │
+                ▼
+        Storage Collision
+                │
+                ▼
+         InitializableV2.sol
+                │
+                ▼
+      Initializer Bypass
+                │
+                ▼
+        Governance.sol
+                │
+                ▼
+       GovernanceV2.sol
+                │
+                ▼
+      Governance Takeover
+                │
+                ▼
+         Treasury Drain
+```
+
+### Root Cause Files
+
+The primary root cause of the vulnerability exists in the interaction between:
+
+```text
+contracts/contracts/AudiusAdminUpgradeabilityProxy.sol
+eth-contracts/contracts/InitializableV2.sol
+```
+
+### Exploited Contracts
+
+The attacker ultimately abused the broken initialization logic through:
+
+```text
+eth-contracts/contracts/Governance.sol
+eth-contracts/contracts/GovernanceV2.sol
+```
+
+Together, these contracts enabled the attacker to bypass initialization protections, obtain governance privileges, and execute the malicious treasury-draining proposal.
+
+---
+## Impact
+
+### Financial Impact
+
+* 18.5 Million AUDIO Tokens Drained
+* Approximately $6 Million at the time of attack
+
+### Technical Impact
+
+* Governance Compromise
+* Treasury Compromise
+* Protocol Trust Impact
+* Emergency Contract Suspension
+
+---
+
+## Remediation
+
+Audius responded by:
+
+1. Pausing affected contracts.
+2. Investigating governance changes.
+3. Correcting storage layout issues.
+4. Migrating to safer proxy storage mechanisms.
+5. Reviewing upgradeability architecture.
+
+---
+
+## Secure Fix
+
+Instead of using normal storage slots:
+
+```solidity
+address proxyAdmin;
+```
+
+Modern upgradeable contracts use EIP-1967 reserved storage slots:
+
+```solidity
+bytes32 internal constant _ADMIN_SLOT =
+0xb53127684a568b...
+```
+
+This prevents storage collisions between:
+
+* Proxy contracts
+* Implementation contracts
+
+---
+
+## Security Lessons Learned
+
+### 1. Storage Layout Matters
+
+Storage collisions can completely compromise contract security.
+
+### 2. Upgradeable Contracts Are High Risk
+
+Proxy architectures introduce additional attack surfaces beyond traditional smart contracts.
+
+### 3. Initializers Must Be Carefully Protected
+
+A broken initializer can lead to complete ownership takeover.
+
+### 4. Governance Is a High-Value Target
+
+Compromising governance often grants access to protocol funds.
+
+### 5. Use Battle-Tested Standards
+
+EIP-1967 and modern OpenZeppelin proxy implementations significantly reduce storage collision risks.
+
+---
+
+## References
+
+* Audius Protocol Repository
+* Audius Postmortem Reports
+* OpenZeppelin Upgradeable Contracts Documentation
+* EIP-1967 Proxy Storage Standard
+* Security Analysis of the Audius Governance Exploit
+
+---
+
+## Key Takeaway
+
+The Audius Governance Hack demonstrates how a seemingly minor storage-layout mistake in an upgradeable proxy architecture can escalate into a complete governance takeover. The vulnerability was not caused by complex cryptographic failures or flash-loan manipulation, but by an incorrect storage configuration that permanently bypassed initialization protections and allowed attackers to seize control of protocol governance.
