@@ -1,0 +1,4 @@
+# Fix
+Balancer's remediation removed vulnerable Linear Pool configurations from service and protected affected liquidity while the issue was addressed. The project sunset the vulnerable Linear Pool technology used by the affected Boosted Pools and worked on a next-generation Boosted Pool design. The accounting assumptions around ERC-4626 rates and rounding were reviewed so temporary balance manipulation could not create an exploitable discrepancy. Affected components were paused or disabled where appropriate and users were given a path to withdraw liquidity.
+## Security lesson
+AMM rate calculations must be robust against temporary balance manipulation and integer rounding. Flash liquidity makes it unsafe to assume an attacker cannot move a pool into a boundary state. Accounting formulas should be tested at extreme ratios and rounding boundaries, especially when rates come from external ERC-4626 conversions.
