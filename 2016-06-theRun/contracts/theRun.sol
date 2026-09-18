@@ -1,3 +1,5 @@
+pragma solidity ^0.4.0;
+
 contract theRun {
         uint private Balance = 0;
         uint private Payout_id = 0;
